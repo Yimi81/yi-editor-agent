@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "yi-editor-agent"
+version = "0.1.0"
+description = ""
+authors = ["Yimi81 <1548222878@qq.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
