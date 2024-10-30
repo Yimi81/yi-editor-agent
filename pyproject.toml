@@ -10,6 +10,7 @@ python = "^3.11"
 requests = "^2.32.3"
 pandas = "^2.2.3"
 streamlit = "^1.39.0"
+unitypy = "^1.20.12"
 
 
 [build-system]

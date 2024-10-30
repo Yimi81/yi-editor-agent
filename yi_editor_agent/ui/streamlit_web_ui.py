@@ -5,8 +5,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from datetime import datetime
-from pygetwindow import getWindowsWithTitle
-from pywinauto.application import Application
+
 
 
 BASE_URL = 'http://10.1.2.119'
@@ -20,19 +19,19 @@ def navigate_api(path):
     json_data = json.dumps(data)
     response = requests.post(UNITY_URL, headers={"Content-Type": "application/json"}, data=json_data)
     if response.status_code == 200:
-        # 获取当前所有窗口
-        windows = getWindowsWithTitle('Unity')
+        # # 获取当前所有窗口
+        # windows = getWindowsWithTitle('Unity')
 
-        if windows:
-            unity_window = windows[0]
-            # 使用 pywinauto 来激活窗口
-            app = Application().connect(handle=unity_window._hWnd)
-            app.top_window().set_focus()
-            app.top_window().restore()
-            app.top_window().maximize() 
-            print("Unity editor window brought to front.")
-        else:
-            print("Unity editor window not found.")
+        # if windows:
+        #     unity_window = windows[0]
+        #     # 使用 pywinauto 来激活窗口
+        #     app = Application().connect(handle=unity_window._hWnd)
+        #     app.top_window().set_focus()
+        #     app.top_window().restore()
+        #     app.top_window().maximize() 
+        #     print("Unity editor window brought to front.")
+        # else:
+        #     print("Unity editor window not found.")
             
         return response.json()
     else:
