@@ -3,21 +3,21 @@ import pandas as pd
 from tqdm import tqdm
 from yi_editor_agent.utils.config import OUTPUT_PATH
 
-def main(content_path, output_csv):
+def generate_info_for_unity(content_path, output_csv):
     asset_data = []
 
     # 常见资产文件后缀，按类型分类
     asset_extensions = {
         "scene": [".unity"],
         "prefab": [".prefab"],
-        "material": [".mat"],
+        #"material": [".mat"],
         #"shader": [".shader", ".cginc"],
         #"script": [".cs", ".js", ".boo"],
-        "texture": [".png", ".jpg", ".jpeg", ".tga", ".bmp", ".gif", ".psd", ".tif", ".tiff"],
+        # "texture": [".png", ".jpg", ".jpeg", ".tga", ".bmp", ".gif", ".psd", ".tif", ".tiff"],
         #"model": [".fbx", ".obj", ".dae", ".3ds", ".dxf"],
         #"audio": [".wav", ".mp3", ".ogg", ".aiff", ".aif"],
         #"video": [".mp4", ".mov", ".avi"],
-        "animation": [".anim", ".controller"],
+        #"animation": [".anim", ".controller"],
         #"font": [".ttf", ".otf", ".fnt"],
         #"scriptable_object": [".asset"],
         #"gui_skin": [".guiskin"],
@@ -60,4 +60,4 @@ def main(content_path, output_csv):
 if __name__ == "__main__":
     content_path = 'D:\Party_Program_YGF\Client\Assets'
     output_csv = os.path.join(OUTPUT_PATH, 'output.csv')
-    main(content_path, output_csv)
+    generate_info_for_unity(content_path, output_csv)
