@@ -1,57 +1,35 @@
-import os
 import unreal
-import pandas as pd
 
-# 假设你有一个函数generate_description_from_images来生成描述
-def generate_description_from_images(images):
-    # Placeholder: 这里调用多模态LLM生成描述
-    return "Generated description"
+# 创建AssetRegistry以获取资产列表
+asset_registry = unreal.AssetRegistryHelpers.get_asset_registry()
 
-def capture_views(asset):
-    # Captures front, side, and top views of the asset
-    # Placeholder: 需要使用UE5的API实现截图功能
-    front_view = f"{asset.get_name()}_front.png"
-    side_view = f"{asset.get_name()}_side.png"
-    top_view = f"{asset.get_name()}_top.png"
-    return [front_view, side_view, top_view]
+# 设置过滤器仅查询StaticMesh
+filter = unreal.ARFilter(
+    class_names=["StaticMesh"],  # 只查找StaticMesh类型
+    package_paths=["/Game"],     # 选择扫描的路径
+    recursive_paths=True         # 遍历子目录
+)
 
-def main(content_path, output_csv):
-    asset_data = []
+# 获取符合条件的资产数据
+assets = asset_registry.get_assets(filter)
 
-    # 遍历content目录，找到StaticMesh和SkeletalMesh资产
-    for root, dirs, files in os.walk(content_path):
-        for file in files:
-            if file.endswith('.uasset'):
-                asset_path = os.path.join(root, file)
-                asset = unreal.EditorAssetLibrary.load_asset(asset_path)
-                
-                if isinstance(asset, unreal.StaticMesh) or isinstance(asset, unreal.SkeletalMesh):
-                    asset_id = asset.get_path_name()
-                    asset_name = asset.get_name()
-                    asset_type = "StaticMesh" if isinstance(asset, unreal.StaticMesh) else "SkeletalMesh"
-                    asset_path = asset.get_path_name()
-                    
-                    # 截取三视图
-                    images = capture_views(asset)
-                    
-                    # 生成描述
-                    asset_description = generate_description_from_images(images)
-                    
-                    # 收集数据
-                    asset_data.append({
-                        'asset_id': asset_id,
-                        'asset_name': asset_name,
-                        'asset_type': asset_type,
-                        'asset_description': asset_description,
-                        'asset_thumbnail': images[0],  # 示例中使用front_view作为缩略图
-                        'asset_path': asset_path
-                    })
-
-    # 将数据转换为pandas DataFrame并保存为CSV
-    df = pd.DataFrame(asset_data)
-    df.to_csv(output_csv, index=False)
-
-if __name__ == "__main__":
-    content_path = '/Users/lilithgames/markyi/UGit/AssetManageAgent/Content'
-    output_csv = 'output.csv'
-    main(content_path, output_csv)
+# 遍历每个StaticMesh并获取其缩略图
+for idx, asset_data in enumerate(assets):
+    if idx > 100:
+        break
+    # 获取对象路径
+    object_path = str(asset_data.package_name) + "." + str(asset_data.asset_name)
+    print(object_path)
+    
+    # 加载StaticMesh资产
+    static_mesh = unreal.EditorAssetLibrary.load_asset(object_path)
+    
+    # 确保资产加载成功
+    if static_mesh:
+        # 生成缩略图
+        # unreal.ThumbnailTools.generate_thumbnail_for_object(static_mesh)
+        
+        # 保存缩略图
+        unreal.PythonBPLib.save_thumbnail(object_path, rf"E:\Yi\yi-editor-agent\data\{asset_data.asset_name}.png")
+    else:
+        print(f"Failed to load asset: {object_path}")

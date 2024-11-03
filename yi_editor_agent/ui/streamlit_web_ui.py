@@ -7,7 +7,6 @@ import streamlit as st
 from datetime import datetime
 
 
-
 BASE_URL = 'http://10.1.2.119'
 PARTY_ASSETS_ANNOTATION_PATH = rf"E:\Lilith\_Party\party-web-ui\party_assets_summary_info.json"
 UNITY_URL = "http://10.1.50.209:5000/navigate"
@@ -19,20 +18,6 @@ def navigate_api(path):
     json_data = json.dumps(data)
     response = requests.post(UNITY_URL, headers={"Content-Type": "application/json"}, data=json_data)
     if response.status_code == 200:
-        # # 获取当前所有窗口
-        # windows = getWindowsWithTitle('Unity')
-
-        # if windows:
-        #     unity_window = windows[0]
-        #     # 使用 pywinauto 来激活窗口
-        #     app = Application().connect(handle=unity_window._hWnd)
-        #     app.top_window().set_focus()
-        #     app.top_window().restore()
-        #     app.top_window().maximize() 
-        #     print("Unity editor window brought to front.")
-        # else:
-        #     print("Unity editor window not found.")
-            
         return response.json()
     else:
         st.error(f'Error: {response.status_code} {response.text}')
@@ -217,6 +202,28 @@ def asset_search():
         )
 
 
+# Project preprocess page
+def project_preprocess():
+    st.markdown(
+        """
+        <div style="background-color: #fefefe; padding: 10px; border-left: 6px solid #007BFF;">
+            <strong>请输入项目文件夹路径进行预处理。</strong><br>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    folder_path = st.text_input('', placeholder='请输入文件夹路径...')
+    
+    if os.path.isdir(folder_path):
+        st.success(f'找到文件夹: {folder_path}')
+        if st.button('开始预处理'):
+            st.write(f'正在预处理文件夹: {folder_path}')
+            # 在这里添加预处理逻辑
+    else:
+        st.warning('输入的路径不是一个有效的文件夹，请重新输入。')
+
+
 # Main page
 def main():
     # 设置页面配置
@@ -228,11 +235,12 @@ def main():
 
     # Sidebar for navigation
     st.sidebar.title('导航')
-    page = st.sidebar.selectbox('选择页面', ['资产搜索'])
+    page = st.sidebar.selectbox('选择页面', ['项目预处理', '资产搜索'])
 
-    if page == '资产搜索':
+    if page == '项目预处理':
+        project_preprocess()
+    elif page == '资产搜索':
         asset_search()
-
 
 if __name__ == '__main__':
     main()
