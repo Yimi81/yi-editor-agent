@@ -1,6 +1,6 @@
 import chromadb
 import os
-os.environ["OPENAI_API_KEY"] = "sk-proj-r6LyGkn7Bv2PxyQ7zeCKT3BlbkFJ3WqIYOLbOjqqq5q0TrU2"
+os.environ["OPENAI_API_KEY"] = "sk-proj-r6LyGkn"
 import json
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext, Document
 from llama_index.vector_stores.chroma import ChromaVectorStore
