@@ -1,27 +1,40 @@
 import json
 import math
 import os
+import asyncio
 import pandas as pd
 import requests
 import streamlit as st
 from datetime import datetime
-
+from yi_editor_agent.utils.config import DATA_PATH, OUTPUT_PATH
+from yi_editor_agent.utils.auto_tag_async import tag_assets_images
 
 BASE_URL = 'http://10.1.2.119'
 PARTY_ASSETS_ANNOTATION_PATH = rf"E:\Lilith\_Party\party-web-ui\party_assets_summary_info.json"
-UNITY_URL = "http://10.1.50.209:5000/navigate"
+UNITY_URL = "http://10.1.50.209:5000"
 
 # 后端api请求
 def navigate_api(path):
     print(f"navigate_api path: {path}")
+    url = f"{UNITY_URL}/navigate"
     data = {'path': path}
     json_data = json.dumps(data)
-    response = requests.post(UNITY_URL, headers={"Content-Type": "application/json"}, data=json_data)
+    response = requests.post(url, headers={"Content-Type": "application/json"}, data=json_data)
     if response.status_code == 200:
         return response.json()
     else:
         st.error(f'Error: {response.status_code} {response.text}')
 
+def project_info_api(project_path, output_path):
+    url = f'{UNITY_URL}/project_info'
+    data = {'projectPath': project_path, 'outputPath': output_path}
+    json_data = json.dumps(data)
+    print(f"project_info_api data: {json_data}")
+    response = requests.post(url, headers={"Content-Type": "application/json"}, data=json_data)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error(f'Error: {response.status_code} {response.text}')
 
 def call_query_api(query, numbers):
     url = f'{BASE_URL}:8888/vectory_query'
@@ -32,7 +45,6 @@ def call_query_api(query, numbers):
     else:
         st.error(f'Error: {response.status_code} {response.text}')
 
-
 def call_multi_query_api(query, numbers, bbox, color):
     url = f'{BASE_URL}:8888/multimodal_vectory_query'
     data = {'query': query, 'numbers': numbers, 'bbox': bbox, 'color': color}
@@ -42,12 +54,10 @@ def call_multi_query_api(query, numbers, bbox, color):
     else:
         st.error(f'Error: {response.status_code} {response.text}')
 
-
 def load_data():
     with open(PARTY_ASSETS_ANNOTATION_PATH, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return pd.json_normalize(data)
-
 
 def search_data(data, search_term, numbers, use_multi_query, bbox, color):
     with st.spinner('正在查询...'):
@@ -65,12 +75,10 @@ def search_data(data, search_term, numbers, use_multi_query, bbox, color):
         ])
     return ordered_data
 
-
 def paginate_data(data, page, items_per_page):
     start = page * items_per_page
     end = start + items_per_page
     return data[start:end]
-
 
 def load_images(filtered_data):
 
@@ -85,7 +93,6 @@ def load_images(filtered_data):
         'asset_id', 'Image', 'asset_name', 'asset_desc_zh', 'asset_size', 'asset_prefab_path'
     ]]
     return filtered_data
-
 
 # Asset search page
 def asset_search():
@@ -124,7 +131,6 @@ def asset_search():
     # Initialize or reset search_term in session state
     if 'search_term' not in st.session_state:
         st.session_state.search_term = ''
-
 
     search_term = st.text_input(
         '搜索',
@@ -201,7 +207,6 @@ def asset_search():
             f'当前第 {page + 1} 页，总共有 {total_pages} 页，共 {total_items} 条记录，翻页在侧边框。'
         )
 
-
 # Project preprocess page
 def project_preprocess():
     st.markdown(
@@ -214,14 +219,37 @@ def project_preprocess():
     )
 
     folder_path = st.text_input('', placeholder='请输入文件夹路径...')
+
+    # Check if the folder path is valid
+    is_valid_path = os.path.isdir(folder_path)
     
-    if os.path.isdir(folder_path):
-        st.success(f'找到文件夹: {folder_path}')
-        if st.button('开始预处理'):
-            st.write(f'正在预处理文件夹: {folder_path}')
-            # 在这里添加预处理逻辑
-    else:
+    if not folder_path:
+        st.warning('请输入项目文件夹路径。')
+    elif not is_valid_path:
         st.warning('输入的路径不是一个有效的文件夹，请重新输入。')
+    else:
+        st.success(f'找到文件夹: {folder_path}')
+
+
+    # Disable the button if the path is not valid
+    is_button_disabled = not is_valid_path
+
+    # Create a placeholder for the button and the potential spinner
+    button_placeholder = st.empty()
+    result_placeholder = st.empty()
+
+    if button_placeholder.button('开始预处理', disabled=is_button_disabled):
+        with st.spinner('正在预处理文件夹...'):
+            # 1. 收集美术资产相关文件信息
+            result = project_info_api(folder_path, DATA_PATH)
+
+        if result:
+            result_placeholder.success(f'预处理完成: {result}')
+            # 2. 收集脚本文件相关文件信息 @TODO
+            with st.spinner('AI自动打标中...'):
+                asyncio.run(tag_assets_images(os.path.join(DATA_PATH, 'PrefabInfo.json'), os.path.join(OUTPUT_PATH, "output.json")))
+        else:
+            result_placeholder.error('预处理失败，请检查日志。')
 
 
 # Main page
