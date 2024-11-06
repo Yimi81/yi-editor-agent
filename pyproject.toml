@@ -17,6 +17,12 @@ llama-index = "^0.11.21"
 chromadb = "^0.5.17"
 llama-index-vector-stores-chroma = "^0.3.0"
 protobuf = "^3.20.3"
+langchain = "^0.3.7"
+langchain-chroma = "^0.1.4"
+langchain-openai = "^0.2.6"
+llama-index-embeddings-xinference = "^0.1.1"
+llama-index-llms-azure-openai = "^0.2.2"
+scipy = "^1.14.1"
 
 
 [build-system]

@@ -247,7 +247,7 @@ def project_preprocess():
             result_placeholder.success(f'预处理完成: {result}')
             # 2. 收集脚本文件相关文件信息 @TODO
             with st.spinner('AI自动打标中...'):
-                asyncio.run(tag_assets_images(os.path.join(DATA_PATH, 'PrefabInfo.json'), os.path.join(OUTPUT_PATH, "output.json")))
+                asyncio.run(tag_assets_images(os.path.join(DATA_PATH, 'AllAssetInfo.json'), os.path.join(OUTPUT_PATH, "output.json")))
         else:
             result_placeholder.error('预处理失败，请检查日志。')
 

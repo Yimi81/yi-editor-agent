@@ -33,6 +33,24 @@ IMAGE_ASSET_PROMPT = """
 }}
 """
 
+IMAGE_MAT_PROMPT = """
+您是一名专业的标签编写员，专门根据Unity中材质球的缩略图图片创建准确的自然语言描述标签。您将根据提供的图片进行标注。您的回应应仅通过生成包含以下内容的JSON文件：
+
+简短自然语言描述，描述该材质球的颜色，适合用于哪些物品。尤其如果该材质球的色彩适合用于室内的墙壁和地板(如卧室、客厅、厨房、卫生间、书房等)，请在描述中提及。格式如下：
+
+{{
+"asset_desc": "[简短自然语言描述，中文]"
+}}
+
+示例输出：
+{{
+"asset_desc": "一种带有光泽的蓝色和深棕色材质，具有分段的布料质感。适合用于衣物如连帽衫或夹克，呈现柔软的布料外观，不适合用于墙壁或地板。"
+}}
+
+注意：
+如果图片中没有物体，请返回“无效数据”。
+"""
+
 
 api_base = 'https://ai2team.openai.azure.com/'
 api_key = '3d97a348a4a24119ac590d12a4751509'
@@ -57,44 +75,74 @@ file_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
-async def process_asset(client, image_files_path, semaphore, asset_id, asset_name):
+async def process_asset(client, image_files_path, semaphore, asset_id, asset_name, asset_type):
     async with semaphore:
         logger.info(f'Processing asset {asset_id} ({asset_name})')
         image_data = []
-        for img_path in image_files_path:
-            with open(img_path, 'rb') as image_file:
-                mime_type, _ = mimetypes.guess_type(img_path)
+
+        if asset_type == "mat" and isinstance(image_files_path, str):
+            with open(image_files_path, 'rb') as image_file:
+                mime_type, _ = mimetypes.guess_type(image_files_path)
                 image = f'data:{mime_type};base64,' + base64.b64encode(
                     image_file.read()).decode('utf-8')
                 image_data.append(image)
+            
+                messages = [
+                {
+                    'role': 'system',
+                    'content': 'You are a helpful assistant.'
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'image_url',
+                            'image_url': {
+                                'url': image_data[0]
+                            }
+                        },
+                        {
+                            'type': 'text',
+                            'text': IMAGE_MAT_PROMPT,
+                        },
+                    ],
+                },
+            ]
+        else:
+            for img_path in image_files_path:
+                with open(img_path, 'rb') as image_file:
+                    mime_type, _ = mimetypes.guess_type(img_path)
+                    image = f'data:{mime_type};base64,' + base64.b64encode(
+                        image_file.read()).decode('utf-8')
+                    image_data.append(image)
 
-        messages = [
-            {
-                'role': 'system',
-                'content': 'You are a helpful assistant.'
-            },
-            {
-                'role': 'user',
-                'content': [
-                    {
-                        'type': 'image_url',
-                        'image_url': {
-                            'url': image_data[0]
-                        }
-                    },
-                    {
-                        'type': 'image_url',
-                        'image_url': {
-                            'url': image_data[1]
-                        }
-                    },
-                    {
-                        'type': 'text',
-                        'text': IMAGE_ASSET_PROMPT,
-                    },
-                ],
-            },
-        ]
+            messages = [
+                {
+                    'role': 'system',
+                    'content': 'You are a helpful assistant.'
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'image_url',
+                            'image_url': {
+                                'url': image_data[0]
+                            }
+                        },
+                        {
+                            'type': 'image_url',
+                            'image_url': {
+                                'url': image_data[1]
+                            }
+                        },
+                        {
+                            'type': 'text',
+                            'text': IMAGE_ASSET_PROMPT,
+                        },
+                    ],
+                },
+            ]
 
         try:
             response = await client.chat.completions.create(
@@ -129,8 +177,9 @@ async def tag_assets_images(data_path, output_path):
     with open(data_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    prefab_infos = data['PrefabInfos']
-    logger.info(f'Loaded {len(prefab_infos)} assets from {data_path}')
+    prefab_infos = data.get('PrefabInfos', [])
+    material_infos = data.get('MaterialInfos', [])
+    logger.info(f'Loaded {len(prefab_infos)} prefab assets and {len(material_infos)} material assets from {data_path}')
 
     for asset in prefab_infos:
         asset_id = asset['Path']
@@ -143,6 +192,22 @@ async def tag_assets_images(data_path, output_path):
                 semaphore,
                 asset_id,
                 asset_name,
+                "prefab"
+            )
+        )
+
+    for asset in material_infos:
+        asset_id = asset['Path']
+        asset_name = asset['Name']
+        image_file_path = asset['ThumbnailPath']
+        tasks.append(
+            process_asset(
+                client,
+                image_file_path,
+                semaphore,
+                asset_id,
+                asset_name,
+                "mat"
             )
         )
 
@@ -155,6 +220,12 @@ async def tag_assets_images(data_path, output_path):
         if description:
             asset['Description'] = description
 
+    for asset in material_infos:
+        asset_id = asset['Path']
+        description = next((result[asset_id] for result in results if result.get(asset_id)), None)
+        if description:
+            asset['Description'] = description["asset_desc"]
+
     # Save the updated data back to a JSON file
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
@@ -165,12 +236,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Automatically batch label images.')
     parser.add_argument(
         '--data_path',
-        default='/path/to/your/json_file.json',
+        default='E:\Yi\yi-editor-agent\data\AllAssetInfo.json',
         help='The path to the input JSON file',
     )
     parser.add_argument(
         '--output_path',
-        default='/path/to/save/output.json',
+        default='E:\Yi\yi-editor-agent\output.json',
         help='The path to save the output JSON file',
     )
     args = parser.parse_args()
