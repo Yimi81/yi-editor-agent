@@ -9,6 +9,7 @@ import streamlit as st
 from datetime import datetime
 from yi_editor_agent.utils.config import DATA_PATH, OUTPUT_PATH
 from yi_editor_agent.utils.auto_tag_async import tag_assets_images
+from yi_editor_agent.utils.helper import get_all_script_files_for_unity
 
 BASE_URL = 'http://localhost'
 PARTY_ASSETS_ANNOTATION_PATH = rf"E:\Lilith\_Party\party-web-ui\party_assets_summary_info.json"
@@ -243,14 +244,23 @@ def project_preprocess():
 
     if button_placeholder.button('开始预处理', disabled=is_button_disabled):
         with st.spinner('正在预处理文件夹...'):
-            # 1. 收集美术资产相关文件信息
+            # 1. 收集需要依赖引擎接口相关文件信息
             result = project_info_api(folder_path, DATA_PATH)
 
         if result:
             result_placeholder.success(f'预处理完成: {result}')
-            # 2. 收集脚本文件相关文件信息 @TODO
+            
             with st.spinner('AI自动打标中...'):
-                asyncio.run(tag_assets_images(os.path.join(DATA_PATH, 'AllAssetInfo.json'), os.path.join(OUTPUT_PATH, "output.json")))
+                asyncio.run(tag_assets_images(os.path.join(DATA_PATH, 'AllAssetInfo.json'), os.path.join(OUTPUT_PATH, "asset.csv")))
+            # 2. 收集脚本文件相关文件信息
+            get_all_script_files_for_unity(folder_path, os.path.join(OUTPUT_PATH, 'script.csv'))
+
+            # 3. 将所有csv合并为一个
+            df1 = pd.read_csv(os.path.join(OUTPUT_PATH, 'asset.csv'))
+            df2 = pd.read_csv(os.path.join(OUTPUT_PATH, 'script.csv'))
+            df = pd.concat([df1, df2])
+            df.to_csv(os.path.join(OUTPUT_PATH, 'all_files_info.csv'), index=False)
+
         else:
             result_placeholder.error('预处理失败，请检查日志。')
 

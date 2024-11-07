@@ -7,9 +7,10 @@ import os
 import logging
 from logging.handlers import RotatingFileHandler
 
-from openai import APIStatusError, AsyncAzureOpenAI, BadRequestError
-from yi_editor_agent.utils.config import LOG_PATH  # 导入 LOG_PATH
-
+import pandas as pd
+from openai import APIStatusError, AsyncAzureOpenAI, BadRequestError, AzureOpenAI
+from yi_editor_agent.utils.config import LOG_PATH, OUTPUT_PATH 
+from yi_editor_agent.utils.helper import analyze_folder_structure
 
 IMAGE_ASSET_PROMPT = """
 您是一名专业的标签编写员，专门根据图片创建准确的自然语言描述标签。您将根据提供的正视图、侧视图进行标注。请结合上述三种视图生成更详细和准确的标签。您的回应应仅通过生成包含以下内容的JSON文件：
@@ -51,23 +52,76 @@ IMAGE_MAT_PROMPT = """
 如果图片中没有物体，请返回“无效数据”。
 """
 
+FOLDER_PROMPT = """
 
-api_base = 'https://ai2team.openai.azure.com/'
-api_key = '3d97a348a4a24119ac590d12a4751509'
-deployment_name = 'ai2team-gpt4o'
-api_version = '2024-06-01'  # this might change in the future
+我有一个 Unity 项目的文件夹结构，其中包含了不同的一级文件夹。每个文件夹包含不同类型的文件，我已经收集了这些文件夹下的文件类型，文件路径，文件名称和数量。请你根据这些信息，分析并描述每个一级文件夹的主要用途，并以 Markdown 格式输出结果。
+
+以下是 {project_directory} 目录下, 一级的文件类型统计信息：
+
+{folder_info}
+
+请根据上述文件类型信息，考虑子文件夹路径，名称和数量，分析并描述每个一级文件夹的主要用途。
+
+输出格式示例：
+
+```markdown
+# 项目结构分析
+
+## Folder1
+- **C# 脚本**: 10
+- **图片文件**: 5
+- **预制件文件**: 2
+
+**主要用途**: 该文件夹包含大量的 C# 脚本，可能用于游戏逻辑和功能实现。同时包含一些图片文件和预制件，可能用于游戏对象和 UI 的定义。
+
+## Folder2
+- **3D 模型文件**: 3
+- **材质文件**: 4
+- **图片文件**: 2
+
+**主要用途**: 该文件夹主要包含 3D 模型和材质文件，可能用于游戏中的 3D 资源和视觉效果定义。
+
+## Folder3
+- **Unity 场景文件**: 1
+
+**主要用途**: 该文件夹包含 Unity 场景文件，可能定义了游戏中的一个或多个场景。
+
+## Folder4
+- **音频文件**: 10
+- **音乐文件**: 2
+
+**主要用途**: 该文件夹包含大量的音频文件，可能用于游戏中的音效和背景音乐。
+
+## Folder5
+- **着色器文件**: 5
+- **C# 脚本**: 3
+
+**主要用途**: 该文件夹包含着色器文件和一些 C# 脚本，可能用于定义游戏中的视觉效果和渲染逻辑。
+```
+
+---
+
+请根据上述格式和提供的信息进行分析。
+"""
+
+api_base = "https://ai2team.openai.azure.com/"
+api_key = "3d97a348a4a24119ac590d12a4751509"
+deployment_name = "ai2team-gpt4o"
+api_version = "2024-06-01"  # this might change in the future
 
 # Configure logging
-log_file_path = os.path.join(LOG_PATH, 'image_tagging.log')
-logger = logging.getLogger('ImageTaggingLogger')
+log_file_path = os.path.join(LOG_PATH, "image_tagging.log")
+logger = logging.getLogger("ImageTaggingLogger")
 logger.setLevel(logging.INFO)
 
 # Create handlers
 console_handler = logging.StreamHandler()
-file_handler = RotatingFileHandler(log_file_path, maxBytes=10*1024*1024, backupCount=5)
+file_handler = RotatingFileHandler(
+    log_file_path, maxBytes=10 * 1024 * 1024, backupCount=5
+)
 
 # Create formatters and add them to the handlers
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(formatter)
 file_handler.setFormatter(formatter)
 
@@ -75,70 +129,45 @@ file_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
-async def process_asset(client, image_files_path, semaphore, asset_id, asset_name, asset_type):
+
+async def process_asset(client, image_files_path, semaphore, asset_id, asset_name):
     async with semaphore:
-        logger.info(f'Processing asset {asset_id} ({asset_name})')
+        logger.info(f"Processing asset {asset_id} ({asset_name})")
         image_data = []
 
-        if asset_type == "mat" and isinstance(image_files_path, str):
-            with open(image_files_path, 'rb') as image_file:
-                mime_type, _ = mimetypes.guess_type(image_files_path)
-                image = f'data:{mime_type};base64,' + base64.b64encode(
-                    image_file.read()).decode('utf-8')
+        for img_path in image_files_path:
+            with open(img_path, "rb") as image_file:
+                mime_type, _ = mimetypes.guess_type(img_path)
+                image = f"data:{mime_type};base64," + base64.b64encode(
+                    image_file.read()
+                ).decode("utf-8")
                 image_data.append(image)
-            
-                messages = [
+
+        if len(image_data) == 1:
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
                 {
-                    'role': 'system',
-                    'content': 'You are a helpful assistant.'
-                },
-                {
-                    'role': 'user',
-                    'content': [
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": image_data[0]}},
                         {
-                            'type': 'image_url',
-                            'image_url': {
-                                'url': image_data[0]
-                            }
-                        },
-                        {
-                            'type': 'text',
-                            'text': IMAGE_MAT_PROMPT,
+                            "type": "text",
+                            "text": IMAGE_MAT_PROMPT,
                         },
                     ],
                 },
             ]
         else:
-            for img_path in image_files_path:
-                with open(img_path, 'rb') as image_file:
-                    mime_type, _ = mimetypes.guess_type(img_path)
-                    image = f'data:{mime_type};base64,' + base64.b64encode(
-                        image_file.read()).decode('utf-8')
-                    image_data.append(image)
-
             messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
                 {
-                    'role': 'system',
-                    'content': 'You are a helpful assistant.'
-                },
-                {
-                    'role': 'user',
-                    'content': [
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": image_data[0]}},
+                        {"type": "image_url", "image_url": {"url": image_data[1]}},
                         {
-                            'type': 'image_url',
-                            'image_url': {
-                                'url': image_data[0]
-                            }
-                        },
-                        {
-                            'type': 'image_url',
-                            'image_url': {
-                                'url': image_data[1]
-                            }
-                        },
-                        {
-                            'type': 'text',
-                            'text': IMAGE_ASSET_PROMPT,
+                            "type": "text",
+                            "text": IMAGE_ASSET_PROMPT,
                         },
                     ],
                 },
@@ -149,17 +178,19 @@ async def process_asset(client, image_files_path, semaphore, asset_id, asset_nam
                 model=deployment_name,
                 messages=messages,
                 max_tokens=4000,
-                response_format={'type': 'json_object'},
+                response_format={"type": "json_object"},
             )
 
             if response:
                 description = response.choices[0].message.content
                 result = {asset_id: json.loads(description)}
-                logger.info(f'Successfully processed asset {asset_id} ({asset_name})')
+                logger.info(f"Successfully processed asset {asset_id} ({asset_name})")
                 return result
 
         except (BadRequestError, APIStatusError) as e:
-            logger.error(f'Skipping asset {asset_id} ({asset_name}) due to content filter violation: {e}')
+            logger.error(
+                f"Skipping asset {asset_id} ({asset_name}) due to content filter violation: {e}"
+            )
             return {asset_id: None}
 
 
@@ -167,83 +198,119 @@ async def tag_assets_images(data_path, output_path):
     client = AsyncAzureOpenAI(
         api_key=api_key,
         api_version=api_version,
-        base_url=f'{api_base}/openai/deployments/{deployment_name}',
+        base_url=f"{api_base}/openai/deployments/{deployment_name}",
     )
 
     semaphore = asyncio.Semaphore(50)  # Adjust the number to control concurrency
     tasks = []
 
     # 读取json文件
-    with open(data_path, 'r', encoding='utf-8') as f:
+    with open(data_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    prefab_infos = data.get('PrefabInfos', [])
-    material_infos = data.get('MaterialInfos', [])
-    logger.info(f'Loaded {len(prefab_infos)} prefab assets and {len(material_infos)} material assets from {data_path}')
+    asset_infos = data.get("AssetInfos", [])
+    logger.info(
+        f"Loaded {len(asset_infos)} prefab assets and {len(asset_infos)} material assets from {data_path}"
+    )
 
-    for asset in prefab_infos:
-        asset_id = asset['Path']
-        asset_name = asset['Name']
-        image_files_path = asset['ThumbnailPaths']
+    for asset in asset_infos:
+        asset_id = asset["Path"]
+        asset_name = asset["Name"]
+        image_files_path = asset["ThumbnailPaths"]
         tasks.append(
-            process_asset(
-                client,
-                image_files_path,
-                semaphore,
-                asset_id,
-                asset_name,
-                "prefab"
-            )
-        )
-
-    for asset in material_infos:
-        asset_id = asset['Path']
-        asset_name = asset['Name']
-        image_file_path = asset['ThumbnailPath']
-        tasks.append(
-            process_asset(
-                client,
-                image_file_path,
-                semaphore,
-                asset_id,
-                asset_name,
-                "mat"
-            )
+            process_asset(client, image_files_path, semaphore, asset_id, asset_name)
         )
 
     results = await asyncio.gather(*tasks)
 
-    # Save the descriptions back into the original data structure
-    for asset in prefab_infos:
-        asset_id = asset['Path']
-        description = next((result[asset_id] for result in results if result.get(asset_id)), None)
+    # Prepare the data for saving
+    output_data = []
+    for asset in asset_infos:
+        asset_id = asset["Path"]
+        description = next(
+            (result[asset_id] for result in results if result.get(asset_id)), None
+        )
         if description:
-            asset['Description'] = description
+            output_data.append(
+                {
+                    "Path": asset["Path"],
+                    "Name": asset["Name"],
+                    "Type": asset["Type"],
+                    "Description": description["asset_desc"],
+                }
+            )
 
-    for asset in material_infos:
-        asset_id = asset['Path']
-        description = next((result[asset_id] for result in results if result.get(asset_id)), None)
-        if description:
-            asset['Description'] = description["asset_desc"]
-
-    # Save the updated data back to a JSON file
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-    logger.info(f'Successfully saved updated data to {output_path}')
+    # Save the updated data to a CSV file using pandas
+    df = pd.DataFrame(output_data)
+    df.to_csv(output_path, index=False, encoding="utf-8")
+    logger.info(f"Successfully saved updated data to {output_path}")
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Automatically batch label images.')
+def tag_project_folder_info(root_folder, folder_info):
+    client = AzureOpenAI(
+        api_key=api_key,
+        api_version=api_version,
+        base_url=f"{api_base}/openai/deployments/{deployment_name}",
+    )
+
+    try:
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {
+                "role": "user",
+                "content": FOLDER_PROMPT.format(
+                    project_directory=root_folder, folder_info=folder_info
+                ),
+            },
+        ]
+        response = client.chat.completions.create(
+            model=deployment_name,
+            messages=messages,
+            max_tokens=4096,
+        )
+
+        if response:
+            description = response.choices[0].message.content
+            logger.info(f"Successfully get folder info for {root_folder}")
+            return description
+
+    except (BadRequestError, APIStatusError) as e:
+        logger.error(e)
+        return None
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Automatically batch label images.")
     parser.add_argument(
-        '--data_path',
-        default='E:\Yi\yi-editor-agent\data\AllAssetInfo.json',
-        help='The path to the input JSON file',
+        "--data_path",
+        default="E:\\Yi\\yi-editor-agent\\data\\AllAssetInfo.json",
+        help="The path to the input JSON file",
     )
     parser.add_argument(
-        '--output_path',
-        default='E:\Yi\yi-editor-agent\output.json',
-        help='The path to save the output JSON file',
+        "--output_path",
+        default="E:\\Yi\\yi-editor-agent\\output\\output.csv",
+        help="The path to save the output CSV file",
     )
+    parser.add_argument(
+        "--folder_info_path",
+        default="E:\\Yi\\yi-editor-agent\\output\\folder_info.md",
+        help="The path to save the folder info markdown file",
+    )
+    parser.add_argument(
+        "--root_folder",
+        default=rf"D:\Party_Program_YGF\Client\Assets",
+        help="The root folder of the Unity project",
+    )
+
     args = parser.parse_args()
 
-    asyncio.run(tag_assets_images(args.data_path, args.output_path))
+    # asyncio.run(tag_assets_images(args.data_path, args.output_path))
+
+    folder_info = analyze_folder_structure(args.root_folder)
+
+    folder_description = tag_project_folder_info(args.root_folder, folder_info)
+
+    if folder_description:
+        with open(args.folder_info_path, "w", encoding="utf-8") as f:
+            f.write(folder_description)
+        logger.info(f"Successfully saved folder info to {args.folder_info_path}")

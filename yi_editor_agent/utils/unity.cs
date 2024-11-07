@@ -4,27 +4,82 @@ using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System;
-using UnityEditor.SceneManagement;
 using Unity.EditorCoroutines.Editor;
+using System.Threading;
+using UnityEditor.SceneManagement;
 
 public class AssetInfoCollector : MonoBehaviour
 {
-    // Remove the static readonly saveDir field
-    // private static readonly string saveDir = @"E:\Images"; // Comment this out as it will be passed as a parameter
+    [MenuItem("Tools/Collect All Asset Info")]
+    public static void CollectAllAssetInfoMenu()
+    {
+        CollectAllAssetInfo("Assets/CollectedInfo", "Assets/Prefabs", "Assets/Materials", result => {
+            Debug.Log("All asset info collection completed: " + result);
+        });
+    }
 
     [MenuItem("Tools/Collect Prefab Info")]
-    public static void CollectPrefabInfo(string saveDir)
+    public static void CollectPrefabInfoMenu()
     {
-        Debug.Log("CollectPrefabInfo started");
+        CollectPrefabInfo("Assets/PrefabInfo", null, result => {
+            Debug.Log("Prefab info collection completed: " + result);
+        });
+    }
 
-        string[] allPrefabGuids = AssetDatabase.FindAssets("t:Prefab");
+    [MenuItem("Tools/Collect Material Info")]
+    public static void CollectMaterialInfoMenu()
+    {
+        CollectMaterialInfo("Assets/MaterialInfo", null, result => {
+            Debug.Log("Material info collection completed: " + result);
+        });
+    }
 
-        // Limit to the first 500 prefabs for testing
+    public static void CollectAllAssetInfo(string saveDir, string prefabSearchDir, string materialSearchDir, Action<bool> onComplete)
+    {
+        Debug.Log($"CollectAllAssetInfo started, saveDir: {saveDir}, prefabSearchDir: {prefabSearchDir}, materialSearchDir: {materialSearchDir}");
+
+        List<AssetInfo> assetInfos = new List<AssetInfo>();
+
+        CollectPrefabInfo(saveDir, prefabSearchDir, assetInfos, prefabResult => {
+            if (prefabResult)
+            {
+                CollectMaterialInfo(saveDir, materialSearchDir, assetInfos, materialResult => {
+                    if (materialResult)
+                    {
+                        SaveAllAssetInfos(assetInfos, saveDir);
+                        onComplete(true);
+                    }
+                    else
+                    {
+                        onComplete(false);
+                    }
+                });
+            }
+            else
+            {
+                onComplete(false);
+            }
+        });
+    }
+
+    public static void CollectPrefabInfo(string saveDir, string searchDir, Action<bool> onComplete)
+    {
+        List<AssetInfo> assetInfos = new List<AssetInfo>();
+        CollectPrefabInfo(saveDir, searchDir, assetInfos, onComplete);
+    }
+
+    public static void CollectPrefabInfo(string saveDir, string searchDir, List<AssetInfo> assetInfos, Action<bool> onComplete)
+    {
+        Debug.Log($"CollectPrefabInfo started, saveDir: {saveDir}, searchDir: {searchDir}");
+
+        string[] allPrefabGuids = string.IsNullOrEmpty(searchDir) ?
+            AssetDatabase.FindAssets("t:Prefab") :
+            AssetDatabase.FindAssets("t:Prefab", new[] { searchDir });
+
+        // Limit to the first 1000 prefabs for testing
         int limit = Mathf.Min(allPrefabGuids.Length, 1000);
         string[] limitedPrefabGuids = new string[limit];
         Array.Copy(allPrefabGuids, limitedPrefabGuids, limit);
-
-        List<PrefabInfo> prefabInfos = new List<PrefabInfo>();
 
         if (!Directory.Exists(saveDir))
         {
@@ -33,6 +88,8 @@ public class AssetInfoCollector : MonoBehaviour
         }
 
         Debug.Log($"limitedPrefabGuids length: {limitedPrefabGuids.Length}");
+
+        CountdownEvent countdown = new CountdownEvent(limitedPrefabGuids.Length);
 
         foreach (string guid in limitedPrefabGuids)
         {
@@ -45,15 +102,12 @@ public class AssetInfoCollector : MonoBehaviour
 
                 if (IsStaticMesh(prefab) || IsSkinnedMesh(prefab))
                 {
-                    PrefabInfo prefabInfo = new PrefabInfo
+                    AssetInfo assetInfo = new AssetInfo
                     {
                         Name = prefab.name,
                         Path = assetPath,
                         Type = GetPrefabType(prefab),
-                        Tags = prefab.tag,
-                        Layer = LayerMask.LayerToName(prefab.layer),
-                        CreationDate = GetCreationDate(assetPath),
-                        ModificationDate = GetModificationDate(assetPath),
+                        ThumbnailPaths = new List<string>()
                     };
 
                     // Start the coroutine to generate the thumbnails
@@ -62,29 +116,125 @@ public class AssetInfoCollector : MonoBehaviour
                     {
                         if (thumbnailPaths != null && thumbnailPaths.Count == 2) // Ensure both thumbnails are generated
                         {
-                            prefabInfo.ThumbnailPaths = thumbnailPaths;
-                            prefabInfos.Add(prefabInfo);
-                            SavePrefabInfos(prefabInfos, saveDir); // Pass saveDir to SavePrefabInfos
+                            assetInfo.ThumbnailPaths = thumbnailPaths;
+                            assetInfos.Add(assetInfo);
                             Debug.Log($"Thumbnail generation completed for: {prefab.name}");
                         }
                         else
                         {
                             Debug.Log($"Thumbnail generation failed for: {prefab.name}");
                         }
+
+                        countdown.Signal();
                     }));
                 }
                 else
                 {
                     Debug.Log($"Prefab {prefab.name} does not have suitable components for thumbnail generation.");
+                    countdown.Signal();
                 }
             }
             else
             {
                 Debug.Log($"Failed to load prefab at path: {assetPath}");
+                countdown.Signal();
             }
         }
 
-        Debug.Log("CollectPrefabInfo completed");
+        EditorCoroutineUtility.StartCoroutineOwnerless(WaitForCompletion(countdown, onComplete));
+    }
+
+    public static void CollectMaterialInfo(string saveDir, string searchDir, Action<bool> onComplete)
+    {
+        List<AssetInfo> assetInfos = new List<AssetInfo>();
+        CollectMaterialInfo(saveDir, searchDir, assetInfos, onComplete);
+    }
+
+    public static void CollectMaterialInfo(string saveDir, string searchDir, List<AssetInfo> assetInfos, Action<bool> onComplete)
+    {
+        Debug.Log($"CollectMaterialInfo started, saveDir: {saveDir}, searchDir: {searchDir}");
+
+        string[] allMaterialGuids = string.IsNullOrEmpty(searchDir) ?
+            AssetDatabase.FindAssets("t:Material") :
+            AssetDatabase.FindAssets("t:Material", new[] { searchDir });
+
+        // Filter out only .mat files
+        List<string> materialGuids = new List<string>();
+        foreach (string guid in allMaterialGuids)
+        {
+            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            if (assetPath.EndsWith(".mat", StringComparison.OrdinalIgnoreCase))
+            {
+                materialGuids.Add(guid);
+            }
+        }
+
+        int limit = Mathf.Min(materialGuids.Count, 1000);
+        string[] limitedMaterialGuids = new string[limit];
+        materialGuids.CopyTo(0, limitedMaterialGuids, 0, limit);
+
+        if (!Directory.Exists(saveDir))
+        {
+            Directory.CreateDirectory(saveDir);
+            Debug.Log($"Created directory: {saveDir}");
+        }
+
+        Debug.Log($"limitedMaterialGuids length: {limitedMaterialGuids.Length}");
+
+        CountdownEvent countdown = new CountdownEvent(limitedMaterialGuids.Length);
+
+        foreach (string guid in limitedMaterialGuids)
+        {
+            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            Material material = AssetDatabase.LoadAssetAtPath<Material>(assetPath);
+
+            if (material != null)
+            {
+                Debug.Log($"Processing material: {material.name}");
+
+                AssetInfo assetInfo = new AssetInfo
+                {
+                    Name = material.name,
+                    Path = assetPath,
+                    Type = "Material",
+                    ThumbnailPaths = new List<string>()
+                };
+
+                // Start the coroutine to get the thumbnail
+                Debug.Log($"Starting thumbnail retrieval for: {material.name}");
+                EditorCoroutineUtility.StartCoroutineOwnerless(GenerateMaterialThumbnailCoroutine(material, material.name, saveDir, (thumbnailPath) =>
+                {
+                    if (!string.IsNullOrEmpty(thumbnailPath))
+                    {
+                        assetInfo.ThumbnailPaths.Add(thumbnailPath);
+                        assetInfos.Add(assetInfo);
+                        Debug.Log($"Thumbnail retrieval completed for: {material.name}");
+                    }
+                    else
+                    {
+                        Debug.Log($"Thumbnail retrieval failed for: {material.name}");
+                    }
+
+                    countdown.Signal();
+                }));
+            }
+            else
+            {
+                Debug.Log($"Failed to load material at path: {assetPath}");
+                countdown.Signal();
+            }
+        }
+
+        EditorCoroutineUtility.StartCoroutineOwnerless(WaitForCompletion(countdown, onComplete));
+    }
+
+    private static IEnumerator WaitForCompletion(CountdownEvent countdown, Action<bool> onComplete)
+    {
+        while (countdown.CurrentCount > 0)
+        {
+            yield return null;
+        }
+        onComplete(true);
     }
 
     private static string GetPrefabType(GameObject prefab)
@@ -111,34 +261,6 @@ public class AssetInfoCollector : MonoBehaviour
     private static bool IsSkinnedMesh(GameObject prefab)
     {
         return prefab.GetComponentInChildren<SkinnedMeshRenderer>() != null;
-    }
-
-    private static List<string> GetComponentNames(GameObject prefab)
-    {
-        Component[] components = prefab.GetComponentsInChildren<Component>();
-        List<string> componentNames = new List<string>();
-
-        foreach (Component component in components)
-        {
-            if (component != null) // Ensure component is not null
-            {
-                componentNames.Add(component.GetType().Name);
-            }
-        }
-
-        return componentNames;
-    }
-
-    private static string GetCreationDate(string assetPath)
-    {
-        string fullPath = Path.Combine(Application.dataPath.Replace("Assets", ""), assetPath);
-        return File.GetCreationTime(fullPath).ToString("yyyy-MM-dd HH:mm:ss");
-    }
-
-    private static string GetModificationDate(string assetPath)
-    {
-        string fullPath = Path.Combine(Application.dataPath.Replace("Assets", ""), assetPath);
-        return File.GetLastWriteTime(fullPath).ToString("yyyy-MM-dd HH:mm:ss");
     }
 
     private static IEnumerator GenerateThumbnailsCoroutine(GameObject prefab, string prefabName, string saveDir, Action<List<string>> callback)
@@ -233,6 +355,31 @@ public class AssetInfoCollector : MonoBehaviour
         yield return null;
     }
 
+    private static IEnumerator GenerateMaterialThumbnailCoroutine(Material material, string materialName, string saveDir, Action<string> callback)
+    {
+        string thumbnailPath = null;
+
+        // Get the built-in thumbnail from AssetPreview
+        Texture2D thumbnail = AssetPreview.GetAssetPreview(material);
+        while (thumbnail == null)
+        {
+            yield return null;
+            thumbnail = AssetPreview.GetAssetPreview(material);
+        }
+
+        if (thumbnail != null)
+        {
+            // Save the thumbnail
+            byte[] bytes = thumbnail.EncodeToPNG();
+            thumbnailPath = Path.Combine(saveDir, $"{materialName}.png");
+            File.WriteAllBytes(thumbnailPath, bytes);
+
+            Debug.Log($"Saved thumbnail for {materialName} at {thumbnailPath}");
+        }
+
+        callback(thumbnailPath);
+    }
+
     private static bool IsTextureBlack(Texture2D texture)
     {
         Color[] pixels = texture.GetPixels();
@@ -246,38 +393,32 @@ public class AssetInfoCollector : MonoBehaviour
         return true;
     }
 
-    private static void SavePrefabInfos(List<PrefabInfo> prefabInfos, string saveDir)
+    private static void SaveAllAssetInfos(List<AssetInfo> assetInfos, string saveDir)
     {
-        string json = JsonUtility.ToJson(new PrefabInfoList(prefabInfos), true);
-        string jsonPath = Path.Combine(saveDir, "PrefabInfo.json");
+        AllAssetInfos allAssetInfos = new AllAssetInfos
+        {
+            AssetInfos = assetInfos
+        };
+
+        string json = JsonUtility.ToJson(allAssetInfos, true);
+        string jsonPath = Path.Combine(saveDir, "AllAssetInfo.json");
         File.WriteAllText(jsonPath, json);
 
-        Debug.Log($"Prefab information collected and saved to {jsonPath}");
+        Debug.Log($"All asset information collected and saved to {jsonPath}");
     }
 
     [System.Serializable]
-    public class PrefabInfo
+    public class AssetInfo
     {
         public string Name;
         public string Path;
         public string Type;
-        public string Tags;
-        public string Layer;
-        public string CreationDate;
-        public string ModificationDate;
         public List<string> ThumbnailPaths;
-
-        // Add other fields as needed
     }
 
     [System.Serializable]
-    public class PrefabInfoList
+    public class AllAssetInfos
     {
-        public List<PrefabInfo> PrefabInfos;
-
-        public PrefabInfoList(List<PrefabInfo> prefabInfos)
-        {
-            PrefabInfos = prefabInfos;
-        }
+        public List<AssetInfo> AssetInfos;
     }
 }
