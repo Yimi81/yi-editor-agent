@@ -55,8 +55,7 @@ public class AssetListenServer : EditorWindow
                     EditorApplication.delayCall += () =>
                     {
                         NavigateToAsset(data.path);
-                        // Call Windows API after delay to bring Unity to front
-                        EditorApplication.delayCall += BringUnityEditorToFront;
+                        // EditorApplication.delayCall += BringUnityEditorToFront;
                     };
                 }
 
@@ -73,18 +72,24 @@ public class AssetListenServer : EditorWindow
                 {
                     var json = reader.ReadToEnd();
                     var data = JsonUtility.FromJson<ProjectInfoRequest>(json);
+
+                    // 打印 data 的值来检查参数是否正确接收
+                    Debug.Log($"Received project_path: {data.projectPath}");
+                    Debug.Log($"Received output_path: {data.outputPath}");
+
                     EditorApplication.delayCall += () =>
                     {
-                        AssetInfoCollector.CollectPrefabInfo(data.outputPath);
+                        AssetInfoCollector.CollectAllAssetInfo(data.outputPath, null, null, (success) =>
+                        {
+                            var responseString = success ? "{\"message\": \"CollectAllAssetInfo completed successfully\"}" : "{\"message\": \"CollectAllAssetInfo failed\"}";
+                            var buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
+                            response.ContentLength64 = buffer.Length;
+                            var output = response.OutputStream;
+                            output.Write(buffer, 0, buffer.Length);
+                            output.Close();
+                        });
                     };
                 }
-
-                var responseString = "{\"message\": \"CollectPrefabInfo started\"}";
-                var buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
-                response.ContentLength64 = buffer.Length;
-                var output = response.OutputStream;
-                output.Write(buffer, 0, buffer.Length);
-                output.Close();
             }
         }
     }
@@ -107,31 +112,42 @@ public class AssetListenServer : EditorWindow
         }
     }
 
-    private void BringUnityEditorToFront()
+private void BringUnityEditorToFront()
+{
+    IntPtr unityWindowHandle = FindUnityEditorWindow();
+    Debug.Log($"Unity window handle: {unityWindowHandle}");
+    if (unityWindowHandle != IntPtr.Zero)
     {
-        IntPtr unityWindowHandle = FindUnityEditorWindow();
-        Debug.Log($"Unity window handle: {unityWindowHandle}");
-        if (unityWindowHandle != IntPtr.Zero)
+        Debug.Log("Bringing Unity editor window to front.");
+        // Restore the window if it is minimized
+        ShowWindow(unityWindowHandle, SW_RESTORE);
+        // Maximize the window
+        ShowWindow(unityWindowHandle, SW_MAXIMIZE);
+        // Bring to front and set focus
+        bool foregroundResult = SetForegroundWindow(unityWindowHandle);
+        IntPtr activeWindowResult = SetActiveWindow(unityWindowHandle); // Set the window as active
+        IntPtr focusResult = SetFocus(unityWindowHandle); // Set focus to the window
+        
+        Debug.Log($"SetForegroundWindow result: {foregroundResult}");
+        Debug.Log($"SetActiveWindow result: {activeWindowResult != IntPtr.Zero}");
+        Debug.Log($"SetFocus result: {focusResult != IntPtr.Zero}");
+        
+        if (!foregroundResult || activeWindowResult == IntPtr.Zero || focusResult == IntPtr.Zero)
         {
-            Debug.Log("Bringing Unity editor window to front.");
-            // Restore the window if it is minimized
-            ShowWindow(unityWindowHandle, SW_RESTORE);
-            // Bring to front
-            bool flag = SetForegroundWindow(unityWindowHandle);
-            if (flag)
-            {
-                Debug.Log("Unity editor window brought to front.");
-            }
-            else
-            {
-                Debug.LogError("Failed to bring Unity editor window to front.");
-            }
+            // If any of these calls fail, log an error
+            Debug.LogError("Failed to bring Unity editor window to front and focus.");
         }
         else
         {
-            Debug.LogError("Unity editor window not found.");
+            Debug.Log("Unity editor window brought to front and maximized.");
         }
     }
+    else
+    {
+        Debug.LogError("Unity editor window not found.");
+    }
+}
+
 
     private IntPtr FindUnityEditorWindow()
     {
@@ -176,8 +192,14 @@ public class AssetListenServer : EditorWindow
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
-    private const int SW_RESTORE = 9;
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetActiveWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetFocus(IntPtr hWnd);
+
+    private const int SW_RESTORE = 9;
+    private const int SW_MAXIMIZE = 3;
     [Serializable]
     private class PathRequest
     {
