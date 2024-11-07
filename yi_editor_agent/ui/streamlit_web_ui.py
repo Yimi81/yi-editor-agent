@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 import asyncio
 import pandas as pd
 import requests
@@ -9,7 +10,7 @@ from datetime import datetime
 from yi_editor_agent.utils.config import DATA_PATH, OUTPUT_PATH
 from yi_editor_agent.utils.auto_tag_async import tag_assets_images
 
-BASE_URL = 'http://10.1.2.119'
+BASE_URL = 'http://localhost'
 PARTY_ASSETS_ANNOTATION_PATH = rf"E:\Lilith\_Party\party-web-ui\party_assets_summary_info.json"
 UNITY_URL = "http://10.1.50.209:5000"
 
@@ -135,7 +136,7 @@ def asset_search():
     search_term = st.text_input(
         '搜索',
         value='',
-        placeholder='🔍 搜索, 多模态检索目前只支持英文输入',
+        placeholder='🔍 搜索',
         key='search',
         label_visibility='hidden',
         on_change=lambda: st.session_state.update(
@@ -220,16 +221,18 @@ def project_preprocess():
 
     folder_path = st.text_input('', placeholder='请输入文件夹路径...')
 
-    # Check if the folder path is valid
-    is_valid_path = os.path.isdir(folder_path)
-    
+    # Regular expression to match Windows file path
+    windows_path_regex = r'^[a-zA-Z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*$'
+
+    # Check if the folder path matches the Windows path regex
+    is_valid_path = re.match(windows_path_regex, folder_path) is not None
+
     if not folder_path:
         st.warning('请输入项目文件夹路径。')
     elif not is_valid_path:
-        st.warning('输入的路径不是一个有效的文件夹，请重新输入。')
+        st.warning('输入的路径不是一个有效的Windows文件夹路径，请重新输入。')
     else:
         st.success(f'找到文件夹: {folder_path}')
-
 
     # Disable the button if the path is not valid
     is_button_disabled = not is_valid_path
